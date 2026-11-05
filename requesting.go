@@ -127,7 +127,7 @@ func (p *desiredPeerRequests) lessByValue(leftRequest, rightRequest RequestIndex
 	if ml.Ok() {
 		return ml.MustLess()
 	}
-	if priority == PiecePriorityNow && t.cl.config.StreamUrgentRequestTimeout > 0 {
+	if priority >= PiecePriorityNext && t.cl.config.StreamUrgentRequestTimeout > 0 {
 		// Playback cannot use later blocks until the current byte offset arrives.
 		// Keep the reader-head piece sequential even across independent routes.
 		return leftRequest < rightRequest

@@ -112,6 +112,8 @@ type ClientConfig struct {
 	// Reassign a stalled reader-head request after this age. Also order
 	// requests within reader-head pieces by byte offset for sequential playback.
 	StreamUrgentRequestTimeout time.Duration
+	// Bytes of near-future reader data to prioritize above ordinary readahead.
+	StreamUrgentWindow int64
 
 	// For the bittorrent protocol.
 	DisableUTP bool

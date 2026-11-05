@@ -285,6 +285,14 @@ func (p *Piece) purePriority() (ret PiecePriority) {
 	// if t._readerNowPieces.Contains(piece - 1) {
 	// 	return PiecePriorityNext
 	// }
+	if window := p.t.cl.config.StreamUrgentWindow; window > 0 {
+		count := int((window + p.t.info.PieceLength - 1) / p.t.info.PieceLength)
+		for r := range p.t.readers {
+			if p.index >= r.pieces.begin && p.index < min(r.pieces.end, r.pieces.begin+count) {
+				ret.Raise(PiecePriorityNext)
+			}
+		}
+	}
 	if p.t.readerReadaheadPieces().Contains(bitmap.BitIndex(p.index)) {
 		ret.Raise(PiecePriorityReadahead)
 	}

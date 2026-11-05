@@ -44,3 +44,12 @@ reader-head deadline in dual-identity mode. Its
 `TestDualIdentityRecoversStalledReaderHead` demonstrates a reader that stalls
 with the original policy and recovers with the streaming policy while both
 sessions remain connected.
+
+`StreamUrgentWindow` assigns `PiecePriorityNext` to a configurable near-future
+reader region, below the current `PiecePriorityNow` and above ordinary
+readahead. The region follows seeks and is bounded by each reader's window.
+The current block keeps its 2 second reassignment deadline; near-future blocks
+are sorted sequentially without that immediate-playback deadline. tor2tv uses
+64 MiB of high-priority near-future data (about 5.4 seconds at 100 Mbit/s)
+within its existing 256 MiB readahead window. Its
+`TestStreamingUrgentWindowFollowsSeek` checks priority boundaries and seeks.
