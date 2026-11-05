@@ -127,6 +127,11 @@ func (p *desiredPeerRequests) lessByValue(leftRequest, rightRequest RequestIndex
 	if ml.Ok() {
 		return ml.MustLess()
 	}
+	if priority == PiecePriorityNow && t.cl.config.StreamUrgentRequestTimeout > 0 {
+		// Playback cannot use later blocks until the current byte offset arrives.
+		// Keep the reader-head piece sequential even across independent routes.
+		return leftRequest < rightRequest
+	}
 	leftRequestState := t.requestState[leftRequest]
 	rightRequestState := t.requestState[rightRequest]
 	leftPeer := leftRequestState.peer.Value()
@@ -277,7 +282,7 @@ func (p *PeerConn) updateRequestsWithReason(reason updateRequestReason) {
 	}
 	if reason == peerUpdateRequestsTimerReason {
 		since := time.Since(p.lastRequestUpdate)
-		if since < updateRequestsTimerDuration {
+		if since < p.t.cl.config.RequestUpdateInterval {
 			panic(since)
 		}
 	}
@@ -295,8 +300,8 @@ func (p *PeerConn) updateRequestsWithReason(reason updateRequestReason) {
 	// called with this reason?
 	p.needRequestUpdate = ""
 	p.lastRequestUpdate = time.Now()
-	if enableUpdateRequestsTimer {
-		p.updateRequestsTimer.Reset(updateRequestsTimerDuration)
+	if interval := p.t.cl.config.RequestUpdateInterval; interval > 0 {
+		p.updateRequestsTimer.Reset(interval)
 	}
 }
 
@@ -388,7 +393,11 @@ func (p *PeerConn) applyRequestState(next desiredRequestState) {
 			diff := int64(current.Requests.GetCardinality()) + 1 - (int64(existing.uncancelledRequests()) - 1)
 			// Steal a request that leaves us with one more request than the existing peer
 			// connection if the stealer more recently received a chunk.
-			if diff > 1 || (diff == 1 && !p.lastUsefulChunkReceived.After(existing.lastUsefulChunkReceived)) {
+			timeout := t.cl.config.StreamUrgentRequestTimeout
+			state := t.requestState[req]
+			staleHead := timeout > 0 && t.piece(t.pieceIndexOfRequestIndex(req)).purePriority() == PiecePriorityNow &&
+				time.Since(state.when) >= timeout
+			if !staleHead && (diff > 1 || (diff == 1 && !p.lastUsefulChunkReceived.After(existing.lastUsefulChunkReceived))) {
 				continue
 			}
 			t.cancelRequest(req)
@@ -412,10 +421,3 @@ func (p *PeerConn) applyRequestState(next desiredRequestState) {
 	// 	originalRequestCount, current.Requests.GetCardinality(), p.peakRequests, newPeakRequests, p.needRequestUpdate, p)
 	p.peakRequests = newPeakRequests
 }
-
-// This could be set to 10s to match the unchoke/request update interval recommended by some
-// specifications. I've set it shorter to trigger it more often for testing for now.
-const (
-	updateRequestsTimerDuration = 3 * time.Second
-	enableUpdateRequestsTimer   = false
-)

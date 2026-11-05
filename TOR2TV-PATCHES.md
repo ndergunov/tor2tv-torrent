@@ -32,3 +32,15 @@ signal before checking request state. Otherwise an unchoke or reader update
 between the state check and waiting can stall the first request indefinitely.
 `TestMessageWriterRetainsWakeDuringFill` reproduces the failure deterministically
 on the upstream implementation and passes after the fix.
+
+Optional streaming scheduling (`RequestUpdateInterval` and
+`StreamUrgentRequestTimeout`, both disabled by default) periodically revisits
+pending requests even when an idle alternate session has no requests of its
+own. Reader-head blocks are ordered by byte offset. A block held past its
+playback deadline can be reassigned despite ordinary request-count balancing;
+traffic for unrelated blocks does not extend that deadline. Normal background
+piece selection remains unchanged. tor2tv uses 1 second updates and a 2 second
+reader-head deadline in dual-identity mode. Its
+`TestDualIdentityRecoversStalledReaderHead` demonstrates a reader that stalls
+with the original policy and recovers with the streaming policy while both
+sessions remain connected.

@@ -106,6 +106,13 @@ type ClientConfig struct {
 	// PeerDialerGroup() string; untagged dialers belong to the empty group.
 	// A nil callback preserves the original first-successful-dial behavior.
 	PeerDialerGroups func(PeerRemoteAddr) []string
+	// Optional streaming request policy. Zero values preserve upstream behavior.
+	// Periodically reconsider pending requests, including idle peer sessions.
+	RequestUpdateInterval time.Duration
+	// Reassign a stalled reader-head request after this age. Also order
+	// requests within reader-head pieces by byte offset for sequential playback.
+	StreamUrgentRequestTimeout time.Duration
+
 	// For the bittorrent protocol.
 	DisableUTP bool
 	// For the bittorrent protocol.

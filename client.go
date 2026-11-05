@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -1232,8 +1231,8 @@ func (p *PeerConn) initUpdateRequestsTimer() {
 			panic(p.updateRequestsTimer)
 		}
 	}
-	if enableUpdateRequestsTimer {
-		p.updateRequestsTimer = time.AfterFunc(math.MaxInt64, p.updateRequestsTimerFunc)
+	if interval := p.t.cl.config.RequestUpdateInterval; interval > 0 {
+		p.updateRequestsTimer = time.AfterFunc(interval, p.updateRequestsTimerFunc)
 	}
 }
 
@@ -1245,11 +1244,12 @@ func (c *PeerConn) updateRequestsTimerFunc() {
 	if c.closed.IsSet() {
 		return
 	}
-	if c.isLowOnRequests() {
-		// If there are no outstanding requests, then a request update should have already run.
+	interval := c.t.cl.config.RequestUpdateInterval
+	if interval <= 0 {
 		return
 	}
-	if d := time.Since(c.lastRequestUpdate); d < updateRequestsTimerDuration {
+	if d := time.Since(c.lastRequestUpdate); d < interval {
+		c.updateRequestsTimer.Reset(interval - d)
 		// These should be benign, Timer.Stop doesn't guarantee that its function won't run if it's
 		// already been fired.
 		torrent.Add("spurious timer requests updates", 1)
