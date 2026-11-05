@@ -26,3 +26,9 @@ Validation includes the upstream root package short tests and tor2tv's
 hash-verified pieces to two simultaneous identities over TCP and uTP, with
 plaintext and RC4 MSE, plus incoming-connection coverage. The seed checks the
 peer IDs and advertised ports while tor2tv verifies the single shared cache.
+
+The fork also fixes a lost wake in the message writer: subscribe to the update
+signal before checking request state. Otherwise an unchoke or reader update
+between the state check and waiting can stall the first request indefinitely.
+`TestMessageWriterRetainsWakeDuringFill` reproduces the failure deterministically
+on the upstream implementation and passes after the fix.
