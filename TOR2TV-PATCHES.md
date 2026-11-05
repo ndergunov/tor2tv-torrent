@@ -70,3 +70,12 @@ A periodic pass with no new requests no longer resets the upstream queue peak.
 `StreamingDiagnostics()` reports contiguous readable bytes at each reader,
 request overlaps and cumulative scheduling counters; `PeerStats.Streaming`
 provides queue limits, rates, pending requests and response ages.
+
+Urgent scheduling also admits peers by measured useful capacity and observed
+response time relative to an available alternative, including alternatives
+whose queues are full. Slow and unknown probes receive later readahead blocks
+instead of stranding the playback head. A sole available peer is never
+excluded. Queue lengths for measured slow peers can fall to one block. ETA
+includes observed response latency, not only queue bytes divided by rate.
+Regression tests reproduce the previous slow-head assignment and check the
+full-queue, unmeasured, high-latency and sole-peer cases.

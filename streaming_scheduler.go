@@ -98,9 +98,32 @@ func (p *PeerConn) sampleStreamingRate(now time.Time) {
 func (p *PeerConn) streamingRequestLimit() int {
 	limit := 4 // A new peer must prove its speed before receiving a large queue.
 	if p._stats.BytesReadUsefulData.Int64() > 0 {
-		limit = max(4, int(math.Ceil(p.streamingRate()*1.5/float64(p.t.chunkSize)))+2)
+		limit = max(1, int(math.Ceil(p.streamingRate()*1.5/float64(p.t.chunkSize))))
 	}
 	return max(1, min(limit, p.PeerMaxRequests, maxLocalToRemoteRequests))
+}
+
+// Urgent blocks must not be scattered across probe queues or sessions whose
+// useful capacity is negligible beside an available, measured alternative.
+// Full queues still count: waiting for their next refill is safer than handing
+// the playback head to a peer which takes seconds to deliver a single block.
+// Slower sessions remain useful in the lower-priority readahead window.
+func streamingHeadEligible(p *PeerConn, piece int, peers []*PeerConn) bool {
+	var fastest *PeerConn
+	for _, other := range peers {
+		if other.closed.IsSet() || (other.peerChoking && !other.peerAllowedFast.Contains(piece)) || !other.peerHasPiece(piece) || other._stats.BytesReadUsefulData.Int64() == 0 {
+			continue
+		}
+		if fastest == nil || other.streamingRate() > fastest.streamingRate() {
+			fastest = other
+		}
+	}
+	if fastest == nil || fastest == p {
+		return true // Bootstrap and scarce-piece fallback must always work.
+	}
+	return p._stats.BytesReadUsefulData.Int64() > 0 &&
+		p.streamingRate() >= fastest.streamingRate()/8 &&
+		p.stream.responseTime <= max(2*time.Second, 2*fastest.stream.responseTime)
 }
 
 func (p *PeerConn) recordStreamingResponse(req RequestIndex, now time.Time) {
@@ -282,17 +305,6 @@ func (t *Torrent) scheduleExclusiveStreamingRequests() {
 	for _, block := range blocks {
 		var best *PeerConn
 		bestTime := math.Inf(1)
-		// Keep known working peers on the current head; test unknown peers on
-		// subsequent pieces when there is a measured alternative.
-		knownAlternative := false
-		if block.priority == PiecePriorityNow {
-			for _, p := range peers {
-				if !p.closed.IsSet() && !p.peerChoking && p.peerHasPiece(block.piece) && p._stats.BytesReadUsefulData.Int64() > 0 {
-					knownAlternative = true
-					break
-				}
-			}
-		}
 		for _, p := range peers {
 			if p.closed.IsSet() || !p.peerHasPiece(block.piece) || (p.peerChoking && !p.peerAllowedFast.Contains(block.piece)) {
 				continue
@@ -304,10 +316,10 @@ func (t *Torrent) scheduleExclusiveStreamingRequests() {
 			if pending >= p.streamingRequestLimit() {
 				continue
 			}
-			if knownAlternative && p._stats.BytesReadUsefulData.Int64() == 0 {
+			if block.priority >= PiecePriorityNext && !streamingHeadEligible(p, block.piece, peers) {
 				continue
 			}
-			delivery := float64(pending+1) * float64(t.chunkSize) / p.streamingRate()
+			delivery := max(p.stream.responseTime.Seconds(), float64(pending+1)*float64(t.chunkSize)/p.streamingRate())
 			// Existing queue time is part of the estimate. Each assignment immediately
 			// changes the ordering, so both routes receive distinct blocks proportionally.
 			if delivery < bestTime {

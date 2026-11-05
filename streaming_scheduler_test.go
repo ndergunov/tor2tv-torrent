@@ -67,6 +67,10 @@ func TestStreamingExclusiveAssignmentAndQueueRefill(t *testing.T) {
 	tor, p := newStreamingSchedulerFixture(t, 8)
 	tor.cl.lock()
 	defer tor.cl.unlock()
+	for i := 4; i < 8; i++ {
+		tor.pieces[i].priority = PiecePriorityReadahead
+		tor.updatePiecePriorityNoRequests(i)
+	}
 	p[0].stream.rate = 4 << 20
 	p[1].stream.rate = 64 << 10
 	p[0]._stats.BytesReadUsefulData.Add(1)
@@ -242,5 +246,83 @@ func TestStreamingRetiresUrgentHoleBeforeReaderArrives(t *testing.T) {
 	}
 	if tor.requestingPeer(0) != owner {
 		t.Fatal("ownership released before old connection teardown")
+	}
+}
+
+func TestStreamingSlowPeersOnlyProbeBeyondUrgentWindow(t *testing.T) {
+	for _, known := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unknown", true: "slow"}[known], func(t *testing.T) {
+			tor, peers := newStreamingSchedulerFixture(t, 8)
+			tor.cl.lock()
+			defer tor.cl.unlock()
+			fast, slow := peers[0], peers[1]
+			fast.stream.rate = 4 << 20
+			fast._stats.BytesReadUsefulData.Add(1)
+			if known {
+				slow.stream.rate = 24 << 10
+				slow.stream.responseTime = 3 * time.Second
+				slow._stats.BytesReadUsefulData.Add(1)
+				if slow.streamingRequestLimit() > 3 {
+					t.Fatal("slow queue exceeds delivery budget")
+				}
+			}
+			for i := 4; i < 8; i++ {
+				tor.pieces[i].priority = PiecePriorityReadahead
+				tor.updatePiecePriorityNoRequests(i)
+			}
+			tor.scheduleExclusiveStreamingRequests()
+			if slow.requestState.Requests.IsEmpty() {
+				t.Fatal("no forward probes")
+			}
+			slow.requestState.Requests.Iterate(func(req RequestIndex) bool {
+				if tor.pieceIndexOfRequestIndex(req) < 4 {
+					t.Fatal("slow/probe queue owns an urgent block")
+				}
+				if fast.validReceiveChunks[req] != 0 {
+					t.Fatal("overlapping request")
+				}
+				return true
+			})
+			// A full fast queue must not cause the slow peer to take its head.
+			var done []RequestIndex
+			slow.requestState.Requests.Iterate(func(req RequestIndex) bool { done = append(done, req); return true })
+			for _, req := range done {
+				slow.decExpectedChunkReceive(req)
+				slow.deleteRequest(req)
+				tor.dirtyChunks.Add(req)
+			}
+			tor.scheduleExclusiveStreamingRequests()
+			slow.requestState.Requests.Iterate(func(req RequestIndex) bool {
+				if tor.pieceIndexOfRequestIndex(req) < 4 {
+					t.Fatal("full fast queue bypassed guard")
+				}
+				return true
+			})
+			// Fallback when only a slow peer can actually serve the piece.
+			fast.peerChoking = true
+			if !streamingHeadEligible(slow, 0, peers) {
+				t.Fatal("starved sole available peer")
+			}
+		})
+	}
+}
+
+func TestStreamingHighLatencyPeerCannotOwnHead(t *testing.T) {
+	tor, peers := newStreamingSchedulerFixture(t, 1)
+	tor.cl.lock()
+	defer tor.cl.unlock()
+	for _, p := range peers {
+		p._stats.BytesReadUsefulData.Add(1)
+		p.stream.rate = 1 << 20
+	}
+	peers[0].stream.responseTime = time.Second
+	peers[1].stream.rate = 512 << 10
+	peers[1].stream.responseTime = 5 * time.Second
+	if streamingHeadEligible(peers[1], 0, peers) {
+		t.Fatal("ignored observed response latency")
+	}
+	peers[0].peerChoking = true
+	if !streamingHeadEligible(peers[1], 0, peers) {
+		t.Fatal("latency guard prevents scarce-peer fallback")
 	}
 }
