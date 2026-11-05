@@ -1309,9 +1309,21 @@ func (pc *PeerConn) sendInitialMessages() {
 	if pc.PeerExtensionBytes.SupportsDHT() && cl.config.Extensions.SupportsDHT() && cl.haveDhtServer() {
 		pc.write(pp.Message{
 			Type: pp.Port,
-			Port: cl.dhtPort(),
+			Port: pc.dhtPort(),
 		})
 	}
+}
+
+// PORT messages describe the DHT socket on this connection's own route.
+func (pc *PeerConn) dhtPort() uint16 {
+	cl := pc.t.cl
+	for _, server := range cl.dhtServers {
+		port := uint16(missinggo.AddrPort(server.Addr()))
+		if int(port) == pc.localIdentity.ListenPort {
+			return port
+		}
+	}
+	return cl.dhtPort()
 }
 
 func (cl *Client) dhtPort() (ret uint16) {

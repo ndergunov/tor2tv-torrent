@@ -103,3 +103,21 @@ func TestStreamingRouteCountersSurviveClosedSession(t *testing.T) {
 	}
 	t.Fatal("closed route counters lost")
 }
+
+type pathDHTStub struct {
+	DhtServer
+	port int
+}
+
+func (s pathDHTStub) Addr() net.Addr { return &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: s.port} }
+func TestStreamingDHTPortFollowsLocalIdentity(t *testing.T) {
+	cl := &Client{dhtServers: []DhtServer{pathDHTStub{port: 6881}, pathDHTStub{port: 6882}}}
+	p := &PeerConn{}
+	p.t = &Torrent{cl: cl}
+	for _, port := range []int{6881, 6882} {
+		p.localIdentity.ListenPort = port
+		if int(p.dhtPort()) != port {
+			t.Fatalf("DHT port does not follow local identity %d", port)
+		}
+	}
+}
