@@ -2,18 +2,27 @@ package torrent
 
 import (
 	"context"
+	"errors"
+	"fmt"
 )
 
 type dialPool struct {
-	resCh chan DialResult
-	addr  string
-	left  int
+	resCh  chan DialResult
+	addr   string
+	left   int
+	errors []error
 }
 
 func (me *dialPool) getFirst() (res DialResult) {
 	for me.left > 0 && res.Conn == nil {
 		res = <-me.resCh
 		me.left--
+		if res.Err != nil {
+			me.errors = append(me.errors, fmt.Errorf("%s: %w", res.Dialer.DialerNetwork(), res.Err))
+		}
+	}
+	if res.Conn == nil {
+		res.Err = errors.Join(me.errors...)
 	}
 	return
 }
@@ -21,10 +30,8 @@ func (me *dialPool) getFirst() (res DialResult) {
 func (me *dialPool) add(ctx context.Context, dialer Dialer) {
 	me.left++
 	go func() {
-		me.resCh <- DialResult{
-			dialFromSocket(ctx, dialer, me.addr),
-			dialer,
-		}
+		conn, err := dialFromSocket(ctx, dialer, me.addr)
+		me.resCh <- DialResult{Conn: conn, Dialer: dialer, Err: err}
 	}()
 }
 

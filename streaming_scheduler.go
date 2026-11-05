@@ -55,7 +55,9 @@ type StreamingReaderStatus struct {
 }
 
 type StreamingStatus struct {
-	Exclusive bool `json:"exclusive"`
+	Exclusive bool                   `json:"exclusive"`
+	Paths     []StreamingPathStatus  `json:"paths,omitempty"`
+	Routes    []StreamingRouteStatus `json:"routes,omitempty"`
 	streamSchedulerCounters
 	Pending         int                     `json:"pendingBlocks"`
 	DuplicateBlocks int                     `json:"overlappingBlocks"`
@@ -161,6 +163,7 @@ func (t *Torrent) StreamingDiagnostics() StreamingStatus {
 	t.cl.rLock()
 	defer t.cl.rUnlock()
 	out := StreamingStatus{Exclusive: t.cl.config.StreamExclusiveRequests, streamSchedulerCounters: t.streamScheduling, Pending: len(t.requestState)}
+	out.Paths, out.Routes = t.streamingPaths(time.Now())
 	copies := make(map[RequestIndex]int)
 	for pc := range t.conns {
 		if pc.closed.IsSet() {
@@ -228,6 +231,7 @@ func (t *Torrent) scheduleExclusiveStreamingRequests() {
 		return
 	}
 	now := time.Now()
+	t.maintainPeerPaths(now)
 	peers := make([]*PeerConn, 0, len(t.conns))
 	for p := range t.conns {
 		if !p.closed.IsSet() {

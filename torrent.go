@@ -171,6 +171,9 @@ type Torrent struct {
 	// IsSet from nameMu. Switching will probably only increase memory use.
 	gotMetainfoC chan struct{}
 
+	peerPaths              map[peerPathKey]*peerPathState
+	lastPeerPathCheck      time.Time
+	closedRouteStats       map[string]StreamingRouteStatus
 	streamScheduling       streamSchedulerCounters
 	readers                map[*reader]struct{}
 	_readerNowPieces       bitmap.Bitmap
@@ -1978,6 +1981,9 @@ func (t *Torrent) deletePeerConn(c *PeerConn) (ret bool) {
 		// if the connection has been deleted.
 	}
 	_, ret = t.conns[c]
+	if ret {
+		t.closedPeerRoute(c)
+	}
 	delete(t.conns, c)
 	// Avoid adding a drop event more than once. Probably we should track whether we've generated
 	// the drop event against the PexConnState instead.
@@ -3056,6 +3062,9 @@ func initiateConn(
 	}
 	attemptKey := outgoingConnAttemptKey{peer: &peer, group: opts.dialerGroup}
 	t.addHalfOpen(addrStr, attemptKey)
+	if opts.groupSelected {
+		t.recordPeerPathAttempt(addrStr, opts.dialerGroup, time.Now())
+	}
 	go t.cl.outgoingConnection(
 		opts,
 		attemptKey,

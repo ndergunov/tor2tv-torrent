@@ -1287,7 +1287,7 @@ func (c *PeerConn) dialAddr() PeerRemoteAddr {
 		)
 		return c.RemoteAddr
 	}
-	return netip.AddrPortFrom(addrPort.Addr(), uint16(c.PeerListenPort))
+	return netip.AddrPortFrom(addrPort.Addr().Unmap(), uint16(c.PeerListenPort))
 }
 
 func (c *PeerConn) pexEvent(t pexEventType) (_ pexEvent, err error) {

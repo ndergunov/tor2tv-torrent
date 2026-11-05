@@ -79,3 +79,9 @@ excluded. Queue lengths for measured slow peers can fall to one block. ETA
 includes observed response latency, not only queue bytes divided by rate.
 Regression tests reproduce the previous slow-head assignment and check the
 full-queue, unmeasured, high-latency and sole-peer cases.
+
+Independent peer routes are maintained after discovery: a failed secondary
+path is retried with 5-second to 2-minute backoff while its partner session
+remains connected. Incoming peers use the BEP 10 advertised listen port,
+never the ephemeral source port. Path diagnostics retain attempt/failure
+counts and dial/handshake errors; route payload counters survive disconnects.

@@ -706,6 +706,7 @@ func (cl *Client) Torrent(ih metainfo.Hash) (t *Torrent, ok bool) {
 type DialResult struct {
 	Conn   net.Conn
 	Dialer Dialer
+	Err    error
 }
 
 func countDialResult(err error) {
@@ -742,7 +743,7 @@ func DialFirst(ctx context.Context, addr string, dialers []Dialer) (res DialResu
 	return pool.getFirst()
 }
 
-func dialFromSocket(ctx context.Context, s Dialer, addr string) net.Conn {
+func dialFromSocket(ctx context.Context, s Dialer, addr string) (net.Conn, error) {
 	c, err := s.Dial(ctx, addr)
 	if err != nil {
 		log.ContextLogger(ctx).Levelf(log.Debug, "error dialing %q: %v", addr, err)
@@ -754,7 +755,7 @@ func dialFromSocket(ctx context.Context, s Dialer, addr string) net.Conn {
 		tc.SetLinger(0)
 	}
 	countDialResult(err)
-	return c
+	return c, err
 }
 
 func (cl *Client) noLongerHalfOpen(t *Torrent, addr string, attemptKey outgoingConnAttemptKey) {
@@ -876,7 +877,7 @@ func (cl *Client) dialAndCompleteHandshake(opts outgoingConnOpts) (c *PeerConn, 
 			}
 			cl.unlock()
 		}
-		err = fmt.Errorf("all initial dials failed")
+		err = fmt.Errorf("all initial dials failed: %w", firstDialResult.Err)
 		return
 	}
 	if opts.receivedHolepunchConnect && holepunchAddrErr == nil {
@@ -965,6 +966,9 @@ func (cl *Client) outgoingConnection(
 	defer cl.unlock()
 	// Don't release lock between here and addPeerConn, unless it's for failure.
 	cl.noLongerHalfOpen(opts.t, opts.peerInfo.Addr.String(), attemptKey)
+	if opts.groupSelected {
+		opts.t.recordPeerPathResult(opts.peerInfo.Addr.String(), opts.dialerGroup, err)
+	}
 	if err != nil {
 		if cl.config.Debug {
 			cl.logger.Levelf(
