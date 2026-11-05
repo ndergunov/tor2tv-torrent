@@ -335,6 +335,7 @@ func peerConnForPreferredNetworkDirection(
 	cl := Client{}
 	binary.BigEndian.PutUint64(cl.peerID[:], uint64(localPeerId))
 	pc.t = &Torrent{cl: &cl}
+	pc.localIdentity.PeerID = cl.peerID
 	return &pc
 }
 

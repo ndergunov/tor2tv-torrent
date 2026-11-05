@@ -63,8 +63,8 @@ type ClientConfig struct {
 	DataDir string `long:"data-dir" description:"directory to store downloaded torrent data"`
 	// The address to listen for new uTP and TCP BitTorrent protocol connections. DHT shares a UDP
 	// socket with uTP unless configured otherwise.
-	ListenHost              func(network string) string
-	ListenPort              int
+	ListenHost func(network string) string
+	ListenPort int
 	// cfg.NoDefaultPortForwarding aka cfg.DisableUpnp
 	NoDefaultPortForwarding bool
 	UpnpID                  string
@@ -95,6 +95,17 @@ type ClientConfig struct {
 
 	// User-provided Client peer ID. If not present, one is generated automatically.
 	PeerID string
+	// PeerIdentityForConn optionally selects a stable local identity for a
+	// connection. It runs before MSE and peer-wire handshakes, without the
+	// client lock. Return the supplied default for unrecognized connections.
+	PeerIdentityForConn func(net.Conn, PeerIdentity) PeerIdentity
+	// AdditionalPeerIDs are also recognized as ourselves, across all routes.
+	AdditionalPeerIDs []PeerID
+	// PeerDialerGroups optionally starts one independent connection attempt
+	// per returned group. Groups must be unique. Dialers implement
+	// PeerDialerGroup() string; untagged dialers belong to the empty group.
+	// A nil callback preserves the original first-successful-dial behavior.
+	PeerDialerGroups func(PeerRemoteAddr) []string
 	// For the bittorrent protocol.
 	DisableUTP bool
 	// For the bittorrent protocol.

@@ -234,7 +234,10 @@ func (me torrentTrackerAnnouncerKey) Compare(other torrentTrackerAnnouncerKey) i
 // Has the modified scheme for announcer-per-IP protocol and such-forth.
 type trackerAnnouncerKey string
 
-type outgoingConnAttemptKey = *PeerInfo
+type outgoingConnAttemptKey struct {
+	peer  *PeerInfo
+	group string
+}
 
 func (t *Torrent) length() int64 {
 	return t._length.Value
@@ -1731,7 +1734,11 @@ func (t *Torrent) openNewConns() (initiated int) {
 	}
 	numPeers := t.peers.Len()
 	for numPeers != 0 {
-		if len(t.halfOpen) >= t.maxHalfOpen() {
+		halfOpen := len(t.halfOpen)
+		if t.cl.config.PeerDialerGroups != nil {
+			halfOpen = t.numHalfOpenAttempts()
+		}
+		if halfOpen >= t.maxHalfOpen() {
 			return
 		}
 		if t.cl.numHalfOpen >= t.cl.config.TotalHalfOpenConns {
@@ -2502,7 +2509,7 @@ func (t *Torrent) addPeerConn(c *PeerConn) (err error) {
 		if c.PeerID != c0.PeerID {
 			continue
 		}
-		if !t.cl.config.DropDuplicatePeerIds {
+		if !t.cl.config.DropDuplicatePeerIds || c.localIdentity.PeerID != c0.localIdentity.PeerID {
 			continue
 		}
 		if c.hasPreferredNetworkOver(c0) {
@@ -2959,6 +2966,14 @@ func (t *Torrent) VerifyDataContext(ctx context.Context) error {
 	return nil
 }
 
+func (t *Torrent) numHalfOpenAttempts() int {
+	n := 0
+	for _, attempts := range t.halfOpen {
+		n += len(attempts)
+	}
+	return n
+}
+
 func (t *Torrent) connectingToPeerAddr(addrStr string) bool {
 	return len(t.halfOpen[addrStr]) != 0
 }
@@ -2981,12 +2996,12 @@ func (t *Torrent) getHalfOpenPath(
 	return nestedmaps.Next(nestedmaps.Next(nestedmaps.Begin(&t.halfOpen), addrStr), attemptKey)
 }
 
-func (t *Torrent) addHalfOpen(addrStr string, attemptKey *PeerInfo) {
+func (t *Torrent) addHalfOpen(addrStr string, attemptKey outgoingConnAttemptKey) {
 	path := t.getHalfOpenPath(addrStr, attemptKey)
 	if path.Exists() {
 		panic("should be unique")
 	}
-	path.Set(attemptKey)
+	path.Set(attemptKey.peer)
 	t.cl.numHalfOpen++
 }
 
@@ -2997,8 +3012,21 @@ func initiateConn(
 	ignoreLimits bool,
 ) {
 	t := opts.t
+	if groups := t.cl.config.PeerDialerGroups; groups != nil && !opts.groupSelected {
+		opts.groupSelected = true
+		seen := make(map[string]bool)
+		for _, group := range groups(opts.peerInfo.Addr) {
+			if seen[group] {
+				continue
+			}
+			seen[group] = true
+			opts.dialerGroup = group
+			initiateConn(opts, ignoreLimits)
+		}
+		return
+	}
 	peer := opts.peerInfo
-	if peer.Id == t.cl.peerID {
+	if t.cl.isOwnPeerID(peer.Id) {
 		return
 	}
 	if t.cl.badPeerAddr(peer.Addr) && !peer.Trusted {
@@ -3007,14 +3035,25 @@ func initiateConn(
 	addr := peer.Addr
 	addrStr := addr.String()
 	if !ignoreLimits {
-		if t.connectingToPeerAddr(addrStr) {
+		if opts.groupSelected {
+			if t.cl.numHalfOpen >= t.cl.config.TotalHalfOpenConns || t.numHalfOpenAttempts() >= t.maxHalfOpen() {
+				return
+			}
+			for key := range t.halfOpen[addrStr] {
+				if key.group == opts.dialerGroup {
+					return
+				}
+			}
+		} else if t.connectingToPeerAddr(addrStr) {
 			return
 		}
 	}
-	if t.hasPeerConnForAddr(addr) {
-		return
+	for c := range t.conns {
+		if c.RemoteAddr.String() == addrStr && (!opts.groupSelected || c.localIdentity.DialerGroup == opts.dialerGroup) {
+			return
+		}
 	}
-	attemptKey := &peer
+	attemptKey := outgoingConnAttemptKey{peer: &peer, group: opts.dialerGroup}
 	t.addHalfOpen(addrStr, attemptKey)
 	go t.cl.outgoingConnection(
 		opts,

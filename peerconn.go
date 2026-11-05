@@ -67,6 +67,7 @@ type PeerConn struct {
 	connString string
 
 	// See BEP 3 etc.
+	localIdentity      PeerIdentity
 	PeerID             PeerID
 	PeerExtensionBytes pp.PeerExtensionBits
 	PeerListenPort     int
@@ -186,7 +187,7 @@ func (cn *PeerConn) ipv6() bool {
 // As far as I can tell, Transmission just keeps the oldest connection.
 func (cn *PeerConn) isPreferredDirection() bool {
 	// True if our client peer ID is higher than the remote's peer ID.
-	return bytes.Compare(cn.PeerID[:], cn.t.cl.peerID[:]) < 0 == cn.outgoing
+	return bytes.Compare(cn.PeerID[:], cn.localIdentity.PeerID[:]) < 0 == cn.outgoing
 }
 
 // Returns whether the left connection should be preferred over the right one,

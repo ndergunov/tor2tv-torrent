@@ -855,6 +855,9 @@ func (cl *Client) dialAndCompleteHandshake(opts outgoingConnOpts) (c *PeerConn, 
 		ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 		defer cancel()
 		for _, d := range cl.dialers {
+			if opts.groupSelected && dialerGroup(d) != opts.dialerGroup {
+				continue
+			}
 			dialPool.add(ctx, d)
 		}
 	}
@@ -945,6 +948,8 @@ type outgoingConnOpts struct {
 	// Outgoing connection attempt is in response to holepunch connect message.
 	receivedHolepunchConnect bool
 	HeaderObfuscationPolicy  HeaderObfuscationPolicy
+	dialerGroup              string
+	groupSelected            bool
 }
 
 // Called to dial out and run a connection. The addr we're given is already
@@ -1108,7 +1113,7 @@ func init() {
 }
 
 func (cl *Client) connBtHandshake(ctx context.Context, c *PeerConn, ih *metainfo.Hash, reservedBits PeerExtensionBits) (ret metainfo.Hash, err error) {
-	res, err := pp.Handshake(ctx, c.rw(), ih, cl.peerID, reservedBits)
+	res, err := pp.Handshake(ctx, c.rw(), ih, c.localIdentity.PeerID, reservedBits)
 	if err != nil {
 		return
 	}
@@ -1170,7 +1175,7 @@ func (t *Torrent) runHandshookConn(pc *PeerConn) error {
 			return fmt.Errorf("peer did not meet minimum peer extensions: %x", pc.PeerExtensionBytes[:])
 		}
 	}
-	if pc.PeerID == cl.peerID {
+	if cl.isOwnPeerID(pc.PeerID) {
 		if pc.outgoing {
 			connsToSelf.Add(1)
 			addr := pc.RemoteAddr.String()
@@ -1272,7 +1277,7 @@ func (pc *PeerConn) sendInitialMessages() {
 					Reqq:         localClientReqq,
 					YourIp:       pp.CompactIp(pc.remoteIp()),
 					Encryption:   cl.config.HeaderObfuscationPolicy.Preferred || !cl.config.HeaderObfuscationPolicy.RequirePreferred,
-					Port:         cl.incomingPeerPort(),
+					Port:         pc.localIdentity.ListenPort,
 					MetadataSize: t.metadataSize(),
 					// TODO: We can figure these out specific to the socket used.
 					Ipv4: pp.CompactIp(cl.config.PublicIp4.To4()),
@@ -1757,6 +1762,11 @@ func (cl *Client) newConnection(nc net.Conn, opts newConnectionOpts) (c *PeerCon
 		connString:      opts.connString,
 		conn:            nc,
 	}
+	c.localIdentity = PeerIdentity{PeerID: cl.peerID, ListenPort: cl.incomingPeerPort()}
+	if resolve := cl.config.PeerIdentityForConn; resolve != nil {
+		c.localIdentity = resolve(nc, c.localIdentity)
+	}
+	c.localPublicAddr.Port = uint16(c.localIdentity.ListenPort)
 	c.initRequestState()
 	// TODO: Need to be much more explicit about this, including allowing non-IP bannable addresses.
 	if opts.remoteAddr != nil {
