@@ -377,6 +377,14 @@ func (me *PeerConn) _request(r Request) bool {
 }
 
 func (me *PeerConn) handleCancel(r RequestIndex) {
+	if me.t.cl.config.StreamExclusiveRequests {
+		if me.stream.cancelledAt == nil {
+			me.stream.cancelledAt = make(map[RequestIndex]time.Time)
+		}
+		me.stream.cancelledAt[r] = time.Now()
+	}
+	me.stream.cancels++
+	me.t.streamScheduling.Cancels++
 	me.write(makeCancelMessage(me.t.requestIndexToRequest(r)))
 	if me.remoteRejectsCancels() {
 		// Record that we expect to get a cancel ack.
@@ -1577,6 +1585,9 @@ func (me *PeerConn) peerPtr() *Peer {
 
 // The actual value to use as the maximum outbound requests.
 func (cn *PeerConn) nominalMaxRequests() maxRequests {
+	if cn.t != nil && cn.t.cl != nil && cn.t.cl.config.StreamExclusiveRequests {
+		return cn.streamingRequestLimit()
+	}
 	return max(1, min(cn.PeerMaxRequests, cn.peakRequests*2, maxLocalToRemoteRequests))
 }
 
@@ -1770,11 +1781,20 @@ func (cn *PeerConn) request(r RequestIndex) (more bool, err error) {
 	if maxRequests(cn.requestState.Requests.GetCardinality()) >= cn.nominalMaxRequests() {
 		return true, errors.New("too many outstanding requests")
 	}
+	if cn.t.cl.config.StreamExclusiveRequests {
+		for other := range cn.t.conns {
+			if other.validReceiveChunks[r] > 0 {
+				return true, errors.New("streaming block still reserved by a connection")
+			}
+		}
+	}
 	cn.requestState.Requests.Add(r)
 	if cn.validReceiveChunks == nil {
 		cn.validReceiveChunks = make(map[RequestIndex]int)
 	}
 	cn.validReceiveChunks[r]++
+	cn.stream.requests++
+	cn.t.streamScheduling.Requests++
 	cn.t.requestState[r] = requestState{
 		peer: weak.Make(cn),
 		when: time.Now(),
@@ -1827,6 +1847,7 @@ func (c *PeerConn) decExpectedChunkReceive(r RequestIndex) {
 	count := c.validReceiveChunks[r]
 	if count == 1 {
 		delete(c.validReceiveChunks, r)
+		delete(c.stream.cancelledAt, r)
 	} else if count > 1 {
 		c.validReceiveChunks[r] = count - 1
 	} else {
@@ -1839,6 +1860,14 @@ func (c *PeerConn) decExpectedChunkReceive(r RequestIndex) {
 func (c *PeerConn) deleteRequest(r RequestIndex) bool {
 	if !c.requestState.Requests.CheckedRemove(r) {
 		return false
+	}
+	if c.t.cl.config.StreamExclusiveRequests && c.validReceiveChunks[r] > 0 {
+		if c.stream.cancelledAt == nil {
+			c.stream.cancelledAt = make(map[RequestIndex]time.Time)
+		}
+		if _, exists := c.stream.cancelledAt[r]; !exists {
+			c.stream.cancelledAt[r] = time.Now()
+		}
 	}
 	for _, f := range c.callbacks.DeletedRequest {
 		f(PeerRequestEvent{c.peerPtr(), c.t.requestIndexToRequest(r)})
@@ -1894,6 +1923,9 @@ func (p *PeerConn) uncancelledRequests() uint64 {
 }
 
 func (p *PeerConn) isLowOnRequests() bool {
+	if p.t != nil && p.t.cl.config.StreamExclusiveRequests {
+		return p.requestState.Cancelled.IsEmpty() && int(p.requestState.Requests.GetCardinality()) <= p.streamingRequestLimit()/2
+	}
 	return p.requestState.Requests.IsEmpty() && p.requestState.Cancelled.IsEmpty()
 }
 
@@ -1903,6 +1935,7 @@ func (c *PeerConn) checkReceivedChunk(req RequestIndex, msg *pp.Message, ppReq R
 		err = errors.New("received unexpected chunk")
 		return
 	}
+	c.recordStreamingResponse(req, time.Now())
 	c.decExpectedChunkReceive(req)
 
 	if c.peerChoking && c.peerAllowedFast.Contains(pieceIndex(ppReq.Index)) {

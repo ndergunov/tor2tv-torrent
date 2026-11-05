@@ -53,3 +53,20 @@ are sorted sequentially without that immediate-playback deadline. tor2tv uses
 64 MiB of high-priority near-future data (about 5.4 seconds at 100 Mbit/s)
 within its existing 256 MiB readahead window. Its
 `TestStreamingUrgentWindowFollowsSeek` checks priority boundaries and seeks.
+
+## Exclusive streaming scheduler
+
+`StreamExclusiveRequests` enables a torrent-wide delivery-time scheduler.
+Both local identities receive distinct blocks. Live cancelled requests remain
+reserved until Piece/Reject or connection teardown, including legacy peers that
+cannot acknowledge cancellation. Stalled head owners are retired before their
+blocks are reassigned; there is no parallel timeout/endgame double request.
+Active webseed ranges are also reserved, and new webseed spans exclude live
+peer requests and already available chunks.
+
+Request queues use a recent useful-rate estimate, a bounded queue-time target,
+and a low-watermark refill. Newly discovered peers have a small probe budget.
+A periodic pass with no new requests no longer resets the upstream queue peak.
+`StreamingDiagnostics()` reports contiguous readable bytes at each reader,
+request overlaps and cumulative scheduling counters; `PeerStats.Streaming`
+provides queue limits, rates, pending requests and response ages.

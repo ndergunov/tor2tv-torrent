@@ -7,4 +7,5 @@ type PeerStats struct {
 	LastWriteUploadRate float64
 	// How many pieces the peer has.
 	RemotePieceCount int
+	Streaming        StreamingPeerStatus
 }

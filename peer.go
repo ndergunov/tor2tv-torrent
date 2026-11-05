@@ -73,6 +73,7 @@ type (
 		needRequestUpdate    updateRequestReason
 		updateRequestsTimer  *time.Timer
 		lastRequestUpdate    time.Time
+		stream               streamPeerState
 		peakRequests         maxRequests
 		lastBecameInterested time.Time
 		priorInterest        time.Duration
@@ -136,6 +137,9 @@ func (p *Peer) Stats() (ret PeerStats) {
 	ret.DownloadRate = p.downloadRate()
 	ret.LastWriteUploadRate = p.peerImpl.lastWriteUploadRate()
 	ret.RemotePieceCount = p.remotePieceCount()
+	if pc, ok := p.TryAsPeerConn(); ok && pc.t != nil {
+		ret.Streaming = pc.streamingPeerStatus(time.Now())
+	}
 	return
 }
 

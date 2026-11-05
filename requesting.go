@@ -306,6 +306,10 @@ func (p *PeerConn) updateRequestsWithReason(reason updateRequestReason) {
 }
 
 func (p *PeerConn) updateRequests() {
+	if p.t.cl.config.StreamExclusiveRequests {
+		p.t.scheduleExclusiveStreamingRequests()
+		return
+	}
 	next := p.getDesiredRequestState()
 	p.applyRequestState(next)
 	p.t.cacheNextRequestIndexesForReuse(next.Requests.requestIndexes)
@@ -419,5 +423,9 @@ func (p *PeerConn) applyRequestState(next desiredRequestState) {
 	// log.Printf(
 	// 	"requests %v->%v (peak %v->%v) reason %q (peer %v)",
 	// 	originalRequestCount, current.Requests.GetCardinality(), p.peakRequests, newPeakRequests, p.needRequestUpdate, p)
-	p.peakRequests = newPeakRequests
+	// A timer may run with a full queue and add nothing. Preserve the
+	// previous estimate until an actual refill supplies a new sample.
+	if newPeakRequests > 0 {
+		p.peakRequests = newPeakRequests
+	}
 }

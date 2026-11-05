@@ -141,6 +141,12 @@ func (ws *webseedPeer) intoSpec(begin, end RequestIndex) webseed.RequestSpec {
 }
 
 func (ws *webseedPeer) spawnRequest(begin, end RequestIndex, logger *slog.Logger) {
+	if ws.peer.t.cl.config.StreamExclusiveRequests {
+		begin, end = ws.peer.t.exclusiveWebseedRange(begin, end)
+		if begin == end {
+			return
+		}
+	}
 	extWsReq := ws.client.StartNewRequest(ws.peer.closedCtx, ws.intoSpec(begin, end), logger)
 	wsReq := webseedRequest{
 		logger:  logger,

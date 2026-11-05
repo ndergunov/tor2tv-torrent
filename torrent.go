@@ -171,6 +171,7 @@ type Torrent struct {
 	// IsSet from nameMu. Switching will probably only increase memory use.
 	gotMetainfoC chan struct{}
 
+	streamScheduling       streamSchedulerCounters
 	readers                map[*reader]struct{}
 	_readerNowPieces       bitmap.Bitmap
 	_readerReadaheadPieces bitmap.Bitmap

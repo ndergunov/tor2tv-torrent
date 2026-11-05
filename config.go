@@ -109,11 +109,14 @@ type ClientConfig struct {
 	// Optional streaming request policy. Zero values preserve upstream behavior.
 	// Periodically reconsider pending requests, including idle peer sessions.
 	RequestUpdateInterval time.Duration
-	// Reassign a stalled reader-head request after this age. Also order
-	// requests within reader-head pieces by byte offset for sequential playback.
+	// Minimum no-progress timeout for reader-head requests. Exclusive mode
+	// closes an unresponsive connection before releasing its requests.
 	StreamUrgentRequestTimeout time.Duration
 	// Bytes of near-future reader data to prioritize above ordinary readahead.
 	StreamUrgentWindow int64
+	// Coordinate block assignment across all peer connections, with exclusive
+	// ownership, delivery-time ordering and adaptive request queues.
+	StreamExclusiveRequests bool
 
 	// For the bittorrent protocol.
 	DisableUTP bool
