@@ -223,3 +223,24 @@ func TestStreamingWebseedRangeAvoidsLiveReservations(t *testing.T) {
 	// The fake webseed was never started; remove it before Client.Close.
 	delete(tor.webSeeds, webseedUrlKey(unique.Make("https://example.invalid/video")))
 }
+
+func TestStreamingRetiresUrgentHoleBeforeReaderArrives(t *testing.T) {
+	tor, peers := newStreamingSchedulerFixture(t, 1)
+	tor.cl.lock()
+	defer tor.cl.unlock()
+	tor.cl.config.StreamUrgentRequestTimeout = time.Second
+	tor.scheduleExclusiveStreamingRequests()
+	owner := tor.requestingPeer(0)
+	// Other useful responses must not renew ownership of a missing early block.
+	owner.lastUsefulChunkReceived = time.Now()
+	state := tor.requestState[0]
+	state.when = time.Now().Add(-2 * time.Second)
+	tor.requestState[0] = state
+	tor.closeStalledStreamingPeers(peers, time.Now())
+	if !owner.closed.IsSet() {
+		t.Fatal("urgent forward hole survived until reader head")
+	}
+	if tor.requestingPeer(0) != owner {
+		t.Fatal("ownership released before old connection teardown")
+	}
+}

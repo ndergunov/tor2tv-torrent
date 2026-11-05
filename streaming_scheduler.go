@@ -44,10 +44,14 @@ type StreamingPeerStatus struct {
 }
 
 type StreamingReaderStatus struct {
-	Position          int64 `json:"positionBytes"`
-	Contiguous        int64 `json:"contiguousBytes"`
-	Window            int64 `json:"windowBytes"`
-	FirstMissingPiece int   `json:"firstMissingPiece"`
+	Position            int64   `json:"positionBytes"`
+	Contiguous          int64   `json:"contiguousBytes"`
+	Window              int64   `json:"windowBytes"`
+	FirstMissingPiece   int     `json:"firstMissingPiece"`
+	Owner               string  `json:"owner,omitempty"`
+	OwnerRoute          string  `json:"ownerRoute,omitempty"`
+	OwnerRequestSeconds float64 `json:"ownerRequestSeconds,omitempty"`
+	OwnerChoked         bool    `json:"ownerChoked,omitempty"`
 }
 
 type StreamingStatus struct {
@@ -160,7 +164,31 @@ func (t *Torrent) StreamingDiagnostics() StreamingStatus {
 			if contiguous < window {
 				missing = int((r.offset + r.pos + contiguous) / t.info.PieceLength)
 			}
-			out.Readers = append(out.Readers, StreamingReaderStatus{Position: r.offset + r.pos, Contiguous: contiguous, Window: window, FirstMissingPiece: missing})
+			status := StreamingReaderStatus{Position: r.offset + r.pos, Contiguous: contiguous, Window: window, FirstMissingPiece: missing}
+			if missing >= 0 {
+				if req, ok := t.offsetRequest(status.Position + contiguous); ok {
+					index := t.requestIndexFromRequest(req)
+					if state, ok := t.requestState[index]; ok {
+						if owner := state.peer.Value(); owner != nil {
+							status.Owner = owner.RemoteAddr.String()
+							status.OwnerRoute = owner.localIdentity.DialerGroup
+							status.OwnerRequestSeconds = time.Since(state.when).Seconds()
+							status.OwnerChoked = owner.peerChoking
+						}
+					} else {
+						for owner := range t.conns {
+							if at, ok := owner.stream.cancelledAt[index]; ok {
+								status.Owner = owner.RemoteAddr.String()
+								status.OwnerRoute = owner.localIdentity.DialerGroup
+								status.OwnerRequestSeconds = time.Since(at).Seconds()
+								status.OwnerChoked = owner.peerChoking
+								break
+							}
+						}
+					}
+				}
+			}
+			out.Readers = append(out.Readers, status)
 		}
 	}
 	return out
@@ -314,7 +342,9 @@ func (t *Torrent) closeStalledStreamingPeers(peers []*PeerConn, now time.Time) {
 		stalled := false
 		p.requestState.Requests.Iterate(func(req RequestIndex) bool {
 			age := now.Sub(t.requestState[req].when)
-			if t.piece(t.pieceIndexOfRequestIndex(req)).purePriority() != PiecePriorityNow || age < timeout || (now.Sub(progress) < timeout && age < max(3*timeout, 30*time.Second)) {
+			// Recover holes in the urgent forward window before HTTP reaches
+			// them. Later responses must not indefinitely hide one missing block.
+			if t.piece(t.pieceIndexOfRequestIndex(req)).purePriority() < PiecePriorityNext || age < timeout {
 				return true
 			}
 			for _, other := range peers {
@@ -330,7 +360,7 @@ func (t *Torrent) closeStalledStreamingPeers(peers []*PeerConn, now time.Time) {
 		// cancelled block, retain its reservation until Piece or teardown.
 		if !stalled {
 			for req, when := range p.stream.cancelledAt {
-				if now.Sub(when) < timeout || t.piece(t.pieceIndexOfRequestIndex(req)).purePriority() != PiecePriorityNow {
+				if now.Sub(when) < timeout || t.piece(t.pieceIndexOfRequestIndex(req)).purePriority() < PiecePriorityNext {
 					continue
 				}
 				for _, other := range peers {
@@ -346,7 +376,7 @@ func (t *Torrent) closeStalledStreamingPeers(peers []*PeerConn, now time.Time) {
 		}
 		if stalled {
 			t.streamScheduling.StallCloses++
-			p.logger.Printf("closing stalled streaming connection after %s without useful data; pending=%d", now.Sub(progress), p.requestState.Requests.GetCardinality())
+			p.logger.Printf("closing stalled streaming connection remote=%s route=%s timeout=%s lastUsefulAge=%s pending=%d", p.RemoteAddr, p.localIdentity.DialerGroup, timeout, now.Sub(progress), p.requestState.Requests.GetCardinality())
 			p.close()
 		}
 	}
